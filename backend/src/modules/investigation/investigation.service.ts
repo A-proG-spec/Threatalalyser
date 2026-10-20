@@ -1,4 +1,3 @@
-// src/modules/investigation/investigation.service.ts
 import type {
   Investigation,
   ProviderResult,
@@ -20,10 +19,6 @@ import { runAllProviders } from '../../providers';
 import type { ProviderFetchOutcome } from '../../types/normalized';
 import { calculateRisk } from '../../risk/engine';
 
-/**
- * Full investigation result returned to the client.
- * This is the shape the frontend renders.
- */
 export interface InvestigationReport {
   investigation: Investigation;
   indicator: ThreatIndicator;
@@ -32,8 +27,25 @@ export interface InvestigationReport {
 }
 
 /**
- * Main entry point: run a complete investigation for a raw indicator string.
+ * Get the system "Anonymous" user ID.
+ * If it doesn't exist (e.g. first boot), it creates it.
  */
+async function getAnonymousUserId(): Promise<string> {
+  const email = 'anonymous@threatlens.system';
+  let user = await prisma.user.findUnique({ where: { email } });
+  
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        email,
+        name: 'Anonymous System User',
+        passwordHash: 'not-a-real-hash-login-disabled', // Cannot login with this
+      },
+    });
+  }
+  return user.id;
+}
+
 export async function runInvestigation(
   rawIndicator: string,
   userId: string | null
@@ -44,10 +56,14 @@ export async function runInvestigation(
   // ── Step 2: find-or-create indicator ──────────────────────
   const indicator = await findOrCreateIndicator(normalized);
 
-  // ── Step 3: create Investigation row ──────────────────────
+  // ── Step 3: resolve user ID ───────────────────────────────
+  // If the user is anonymous (null), we get the system user's ID.
+  const effectiveUserId = userId || (await getAnonymousUserId());
+
+  // ── Step 4: create Investigation row ──────────────────────
   const investigation = await prisma.investigation.create({
     data: {
-      userId: String(userId),
+      userId: effectiveUserId,
       indicatorId: indicator.id,
       status: 'PROCESSING',
       startedAt: new Date(),
@@ -59,13 +75,13 @@ export async function runInvestigation(
     'Investigation started'
   );
 
-  // ── Step 4: run providers concurrently ───────────────────
+  // ── Step 5: run providers concurrently ───────────────────
   const outcomes = await Promise.all(
     runAllProviders(indicator, userId).map((p) =>
       withTimeout(p, PROVIDER_TIMEOUT_MS, 'Provider Fetch').catch(
         (err): ProviderFetchOutcome => {
           return {
-            provider: 'VIRUSTOTAL', // Fallback, should not be hit
+            provider: 'VIRUSTOTAL', // Fallback
             status: isTimeoutError(err) ? 'TIMEOUT' : 'FAILED',
             normalized: null,
             raw: null,
@@ -80,11 +96,14 @@ export async function runInvestigation(
     )
   );
 
-  // ── Step 5: persist ProviderResult rows ──────────────────
+  // ── Step 6: persist ProviderResult rows ──────────────────
   await persistProviderResults(investigation.id, outcomes);
 
-  // ── Step 6: calculate risk ───────────────────────────────
-  const { score, level, explanation } = calculateRisk(outcomes);
+  // ── Step 7: calculate risk (with AI & MITRE) ─────────────
+  const { score, level, explanation, aiSummary } = await calculateRisk(
+    outcomes,
+    indicator.normalizedValue
+  );
 
   const assessment = await prisma.riskAssessment.create({
     data: {
@@ -92,11 +111,12 @@ export async function runInvestigation(
       score,
       level,
       explanation: explanation as unknown as Prisma.InputJsonValue,
-      algorithmVersion: '1.0.0',
+      aiSummary,
+      algorithmVersion: '1.1.0',
     },
   });
 
-  // ── Step 7: determine final status + summary ─────────────
+  // ── Step 8: determine final status + summary ─────────────
   const { status, summary } = summarizeInvestigation(outcomes, score, level);
 
   const finished = await prisma.investigation.update({
@@ -110,7 +130,6 @@ export async function runInvestigation(
     },
   });
 
-  // Reload provider results from DB (so timestamps and generated ids are fresh)
   const providerResults = await prisma.providerResult.findMany({
     where: { investigationId: investigation.id },
     orderBy: { provider: 'asc' },
@@ -121,7 +140,6 @@ export async function runInvestigation(
     'Investigation completed'
   );
 
-  // ── Step 8: return assembled report ──────────────────────
   return {
     investigation: finished,
     indicator,
@@ -130,10 +148,6 @@ export async function runInvestigation(
   };
 }
 
-/**
- * Fetch a previously-run investigation by id.
- * Ownership check ensures a user can't read another user's report.
- */
 export async function getInvestigationById(
   investigationId: string,
   userId: string
@@ -163,13 +177,6 @@ export async function getInvestigationById(
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Internals
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Persist one ProviderResult row per provider outcome.
- */
 async function persistProviderResults(
   investigationId: string,
   outcomes: ProviderFetchOutcome[]
@@ -197,23 +204,15 @@ function mapProviderStatus(
   s: ProviderFetchOutcome['status']
 ): ProviderStatus {
   switch (s) {
-    case 'SUCCESS':
-      return 'SUCCESS';
-    case 'TIMEOUT':
-      return 'TIMEOUT';
-    case 'RATE_LIMITED':
-      return 'RATE_LIMITED';
-    case 'SKIPPED':
-      return 'SKIPPED';
+    case 'SUCCESS': return 'SUCCESS';
+    case 'TIMEOUT': return 'TIMEOUT';
+    case 'RATE_LIMITED': return 'RATE_LIMITED';
+    case 'SKIPPED': return 'SKIPPED';
     case 'FAILED':
-    default:
-      return 'FAILED';
+    default: return 'FAILED';
   }
 }
 
-/**
- * Decide the final InvestigationStatus + a human-readable summary.
- */
 function summarizeInvestigation(
   outcomes: ProviderFetchOutcome[],
   score: number,

@@ -8,11 +8,6 @@ import type {
 import { prisma } from '../../lib/prisma';
 import { ApiError } from '../../utils/ApiError';
 
-/**
- * Paginated summary of a user's past investigations.
- * Returns lightweight rows — no provider results, no risk explanation —
- * so the history page loads fast even for prolific users.
- */
 export interface InvestigationListItem {
   id: string;
   status: Investigation['status'];
@@ -32,10 +27,6 @@ export interface PaginatedHistory {
   totalPages: number;
 }
 
-/**
- * List investigations for a user, newest first.
- * Enforces page bounds so a caller can't ask for 10 million rows.
- */
 export async function listInvestigationHistory(
   userId: string,
   page = 1,
@@ -81,14 +72,6 @@ export async function listInvestigationHistory(
   };
 }
 
-/**
- * Full report for one investigation.
- * Includes provider results, indicator, and EVERY risk assessment
- * (so the UI can render "score history" for this specific investigation,
- * e.g. after a manual re-run).
- *
- * Ownership check: 404 if investigation belongs to another user.
- */
 export interface InvestigationDetail {
   investigation: Investigation;
   indicator: ThreatIndicator;
@@ -109,11 +92,7 @@ export async function getInvestigationDetail(
     },
   });
 
-  if (!investigation) {
-    throw new ApiError(404, 'Investigation not found', 'INVESTIGATION_NOT_FOUND');
-  }
-  if (investigation.userId !== userId) {
-    // Same 404 as not-found so we don't leak existence to the wrong user
+  if (!investigation || investigation.userId !== userId) {
     throw new ApiError(404, 'Investigation not found', 'INVESTIGATION_NOT_FOUND');
   }
 
@@ -126,13 +105,6 @@ export async function getInvestigationDetail(
   };
 }
 
-/**
- * Compare all investigations of the same indicator by this user.
- * This is the "see how a domain's reputation changed over time" view
- * from the spec. Sorted newest-first.
- *
- * Returns a compact timeline — the frontend renders this as a chart.
- */
 export interface IndicatorTimelinePoint {
   investigationId: string;
   createdAt: Date;
@@ -180,8 +152,6 @@ export async function getIndicatorTimeline(
     },
   });
 
-  // If this user has never investigated the indicator, treat it as 404
-  // (do not leak that the indicator exists in the system from another user).
   if (investigations.length === 0) {
     throw new ApiError(404, 'Indicator not found', 'INDICATOR_NOT_FOUND');
   }
@@ -195,5 +165,57 @@ export async function getIndicatorTimeline(
       riskLevel: i.riskLevel,
       status: i.status,
     })),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// NEW: Dashboard Statistics
+// ─────────────────────────────────────────────────────────────
+
+export interface DashboardStats {
+  totalInvestigations: number;
+  threatsDetected: number;
+  safeInvestigations: number;
+  recentInvestigations: InvestigationListItem[];
+}
+
+export async function getDashboardStats(userId: string): Promise<DashboardStats> {
+  const [total, highRisk, lowRisk, recent] = await Promise.all([
+    prisma.investigation.count({ where: { userId } }),
+    prisma.investigation.count({
+      where: { userId, riskLevel: { in: ['HIGH', 'CRITICAL'] } },
+    }),
+    prisma.investigation.count({
+      where: { userId, riskLevel: { in: ['LOW', 'UNKNOWN'] } },
+    }),
+    prisma.investigation.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        status: true,
+        riskScore: true,
+        riskLevel: true,
+        summary: true,
+        createdAt: true,
+        completedAt: true,
+        indicator: { 
+          select: { 
+            id: true, 
+            type: true, 
+            normalizedValue: true, 
+            originalValue: true 
+          } 
+        }
+      }
+    })
+  ]);
+
+  return {
+    totalInvestigations: total,
+    threatsDetected: highRisk,
+    safeInvestigations: lowRisk,
+    recentInvestigations: recent,
   };
 }

@@ -22,10 +22,6 @@ export interface AuthResult {
 
 /**
  * Register a new user.
- * - Rejects duplicate emails with 409.
- * - Hashes password with bcrypt (cost 12 — ~250ms, deliberately slow to
- *   defeat brute force, but not so slow that login feels sluggish).
- * - Returns a JWT so the frontend doesn't need a second request.
  */
 export async function register(input: RegisterInput): Promise<AuthResult> {
   const existing = await prisma.user.findUnique({
@@ -59,9 +55,6 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
 
 /**
  * Verify credentials and return a JWT.
- * Deliberately returns the SAME error (401 INVALID_CREDENTIALS) for
- * unknown-email and wrong-password cases — leaking "user exists but
- * password wrong" is a well-known enumeration attack.
  */
 export async function login(input: LoginInput): Promise<AuthResult> {
   const row = await prisma.user.findUnique({
@@ -69,8 +62,7 @@ export async function login(input: LoginInput): Promise<AuthResult> {
   });
 
   if (!row) {
-    // Run a dummy bcrypt compare to avoid a timing side-channel that
-    // reveals whether the email exists.
+    // Dummy compare to prevent timing attacks
     await bcrypt.compare(
       input.password,
       '$2a$12$dummy.hash.for.timing.equivalence.only0000000000000000'
@@ -95,7 +87,6 @@ export async function login(input: LoginInput): Promise<AuthResult> {
 
 /**
  * Fetch the currently authenticated user.
- * Used by `GET /api/auth/me`.
  */
 export async function getCurrentUser(userId: string): Promise<SafeUser> {
   const user = await prisma.user.findUnique({
@@ -109,16 +100,58 @@ export async function getCurrentUser(userId: string): Promise<SafeUser> {
   });
 
   if (!user) {
-    // Token was valid but user no longer exists (deleted account).
     throw new ApiError(401, 'User no longer exists', 'USER_NOT_FOUND');
   }
   return user;
 }
 
 /**
- * Sign a JWT with the standard claims we care about.
- * `sub` is the user id (JWT spec name for "subject").
+ * Update user profile (name/email).
  */
+export async function updateProfile(
+  userId: string,
+  data: { name?: string; email?: string }
+): Promise<SafeUser> {
+  if (data.email) {
+    const existing = await prisma.user.findUnique({ where: { email: data.email } });
+    if (existing && existing.id !== userId) {
+      throw new ApiError(409, 'Email already in use', 'EMAIL_TAKEN');
+    }
+  }
+
+  return prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.email !== undefined && { email: data.email }),
+    },
+    select: { id: true, email: true, name: true, createdAt: true },
+  });
+}
+
+/**
+ * Change password. Requires current password to verify identity.
+ */
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new ApiError(404, 'User not found', 'USER_NOT_FOUND');
+
+  const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!isValid) {
+    throw new ApiError(401, 'Incorrect current password', 'INVALID_PASSWORD');
+  }
+
+  const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: newHash },
+  });
+}
+
 function signToken(userId: string, email: string): string {
   return jwt.sign(
     { email },

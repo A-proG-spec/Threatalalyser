@@ -1,39 +1,29 @@
 import type { RiskLevel } from '@prisma/client';
 import type { ProviderFetchOutcome } from '../types/normalized';
 import { RISK_LEVEL_THRESHOLDS, RISK_WEIGHTS } from '../config/constants';
-import {
-  evaluateVirusTotal,
-  evaluateUrlhaus,
-  evaluateAbuseIPDB,
-  type RuleResult,
-} from './rules';
+import { evaluateVirusTotal, evaluateUrlhaus, evaluateAbuseIPDB, type RuleResult } from './rules';
 import { buildExplanation, type RiskExplanation } from './explanation';
+import { extractMitreTechniques, type MitreTechnique } from './attack-mapping';
+import { generateAISummary } from './ai-summary'; // We will create this next
 
 export interface RiskCalculation {
   score: number;
   level: RiskLevel;
-  explanation: RiskExplanation;
+  explanation: RiskExplanation & { mitreTechniques: MitreTechnique[] };
+  aiSummary: string | null;
 }
 
-/**
- * Calculate the overall risk score from provider outcomes.
- * 
- * Rules:
- * 1. Sum up points from each provider's rule.
- * 2. Award a bonus if 2+ providers flag the same indicator.
- * 3. Cap at 100.
- * 4. Map score to RiskLevel enum.
- */
-export function calculateRisk(
-  outcomes: ProviderFetchOutcome[]
-): RiskCalculation {
+export async function calculateRisk(
+  outcomes: ProviderFetchOutcome[],
+  indicatorValue: string
+): Promise<RiskCalculation> {
   const rules: RuleResult[] = [];
   const missingProviders: string[] = [];
+  const allTags: string[] = [];
 
-  // Map outcomes by provider name for easy access
   const byProvider = new Map(outcomes.map(o => [o.provider, o]));
 
-  // ── Run Rules ──
+  // ── Run Rules & Extract Tags ──
   const vtOutcome = byProvider.get('VIRUSTOTAL');
   if (vtOutcome?.status === 'SUCCESS') {
     const rule = evaluateVirusTotal(vtOutcome.normalized);
@@ -44,48 +34,54 @@ export function calculateRisk(
   if (uhOutcome?.status === 'SUCCESS') {
     const rule = evaluateUrlhaus(uhOutcome.normalized);
     if (rule) rules.push(rule);
+    // Extract tags for MITRE mapping
+    if (uhOutcome.normalized?.evidence?.tags) {
+      allTags.push(...uhOutcome.normalized.evidence.tags);
+    }
   } else if (uhOutcome) missingProviders.push('URLHAUS');
 
   const apiOutcome = byProvider.get('ABUSEIPDB');
   if (apiOutcome?.status === 'SUCCESS') {
     const rule = evaluateAbuseIPDB(apiOutcome.normalized);
     if (rule) rules.push(rule);
+    // Extract tags/usage types for MITRE mapping
+    if (apiOutcome.normalized?.evidence?.usageType) {
+      allTags.push(apiOutcome.normalized.evidence.usageType);
+    }
   } else if (apiOutcome) missingProviders.push('ABUSEIPDB');
 
   // ── Sum Points ──
   let totalScore = rules.reduce((sum, rule) => sum + rule.points, 0);
-
-  // ── Corroboration Bonus ──
-  // If 2 or more providers gave points (>0), award the bonus
   const flaggingCount = rules.filter(r => r.points > 0).length;
   const hasCorroboration = flaggingCount >= 2;
-  if (hasCorroboration) {
-    totalScore += RISK_WEIGHTS.CORROBORATION_BONUS;
-  }
-
-  // ── Cap & Floor ──
-  // Never exceed 100. Never go below 0.
+  if (hasCorroboration) totalScore += RISK_WEIGHTS.CORROBORATION_BONUS;
   totalScore = Math.max(0, Math.min(100, totalScore));
 
   // ── Map to RiskLevel ──
   let level: RiskLevel = 'UNKNOWN';
-  if (totalScore === 0) level = 'LOW'; // clean
+  if (rules.length === 0 && missingProviders.length > 0) level = 'UNKNOWN';
+  else if (totalScore === 0) level = 'LOW';
   else if (totalScore < RISK_LEVEL_THRESHOLDS.MEDIUM) level = 'LOW';
   else if (totalScore < RISK_LEVEL_THRESHOLDS.HIGH) level = 'MEDIUM';
   else if (totalScore < RISK_LEVEL_THRESHOLDS.CRITICAL) level = 'HIGH';
   else level = 'CRITICAL';
 
-  // Special case: if all providers failed, it's UNKNOWN, not LOW.
-  if (rules.length === 0 && missingProviders.length > 0) {
-    level = 'UNKNOWN';
-  }
+  // ── Build Explanation & MITRE ──
+  const baseExplanation = buildExplanation(totalScore, rules, missingProviders, hasCorroboration);
+  const mitreTechniques = extractMitreTechniques(allTags);
+  
+  const explanation = {
+    ...baseExplanation,
+    mitreTechniques,
+  };
 
-  // ── Build Explanation ──
-  const explanation = buildExplanation(totalScore, rules, missingProviders, hasCorroboration);
+  // ── Generate AI Summary ──
+  const aiSummary = await generateAISummary(indicatorValue, totalScore, level, rules, mitreTechniques);
 
   return {
     score: totalScore,
     level,
     explanation,
+    aiSummary,
   };
 }
