@@ -8,6 +8,7 @@ import { logger } from './lib/logger';
 import { globalLimiter } from './middleware/rateLimiter';
 import { notFound } from './middleware/notFound';
 import { errorHandler } from './middleware/errorHandler';
+import { statsRouter } from './modules/stats/stats.routes';
 
 // Import Routers
 import { authRouter } from './modules/auth/auth.routes';
@@ -59,6 +60,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/investigations', investigationRouter);
 app.use('/api/history', historyRouter);
+app.use('/api/stats', statsRouter);
 
 // ─── 6. Catch-All & Error Handling ─────────────────────────
 // Must be LAST. Catches 404s and passes everything to the global error handler.

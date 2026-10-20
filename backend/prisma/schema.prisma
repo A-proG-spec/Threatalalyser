@@ -138,6 +138,7 @@ model RiskAssessment {
   score            Int
   level            RiskLevel
   explanation      Json
+  aiSummary        String?  
   algorithmVersion String
   createdAt        DateTime  @default(now())
 
