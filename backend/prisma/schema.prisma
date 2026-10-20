@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────
+
+enum IndicatorType {
+  URL
+  DOMAIN
+  IP
+}
+
+enum InvestigationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum RiskLevel {
+  UNKNOWN
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ThreatProvider {
+  VIRUSTOTAL
+  URLHAUS
+  ABUSEIPDB
+}
+
+enum ProviderStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RATE_LIMITED
+  TIMEOUT
+  SKIPPED
+}
+
+// ─── USER ─────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  investigations Investigation[]
+  auditLogs      AuditLog[]
+
+  @@index([createdAt])
+}
+
+// ─── THREAT INDICATOR ─────────────────────
+
+model ThreatIndicator {
+  id                 String        @id @default(cuid())
+  type               IndicatorType
+  originalValue      String
+  normalizedValue    String
+  firstSeenAt        DateTime      @default(now())
+  lastInvestigatedAt DateTime      @default(now())
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  investigations Investigation[]
+  caches         ThreatCache[]
+
+  @@unique([type, normalizedValue])
+  @@index([type, lastInvestigatedAt])
+}
+
+// ─── INVESTIGATION ────────────────────────
+
+model Investigation {
+  id          String              @id @default(cuid())
+  userId      String
+  indicatorId String
+  status      InvestigationStatus @default(PENDING)
+  riskScore   Int?
+  riskLevel   RiskLevel           @default(UNKNOWN)
+  summary     String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  indicator       ThreatIndicator  @relation(fields: [indicatorId], references: [id], onDelete: Restrict)
+  providerResults ProviderResult[]
+  assessments     RiskAssessment[]
+
+  @@index([userId, createdAt])
+  @@index([indicatorId, createdAt])
+  @@index([status, createdAt])
+  @@index([riskLevel, createdAt])
+}
+
+// ─── PROVIDER RESULT ──────────────────────
+
+model ProviderResult {
+  id              String         @id @default(cuid())
+  investigationId String
+  provider        ThreatProvider
+  status          ProviderStatus @default(PENDING)
+  rawResponse     Json?
+  normalizedData  Json?
+  detectionCount  Int?
+  totalEngines    Int?
+  errorCode       String?
+  errorMessage    String?
+  cacheHit        Boolean        @default(false)
+  fetchedAt       DateTime?
+  createdAt       DateTime       @default(now())
+
+  investigation Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@unique([investigationId, provider])
+  @@index([provider, status, createdAt])
+}
+
+// ─── RISK ASSESSMENT ──────────────────────
+
+model RiskAssessment {
+  id               String    @id @default(cuid())
+  investigationId  String
+  score            Int
+  level            RiskLevel
+  explanation      Json
+  algorithmVersion String
+  createdAt        DateTime  @default(now())
+
+  investigation Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@index([investigationId, createdAt])
+}
+
+// ─── THREAT CACHE ─────────────────────────
+
+model ThreatCache {
+  id          String         @id @default(cuid())
+  indicatorId String
+  provider    ThreatProvider
+  response    Json
+  fetchedAt   DateTime       @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  indicator ThreatIndicator @relation(fields: [indicatorId], references: [id], onDelete: Cascade)
+
+  @@unique([indicatorId, provider])
+  @@index([expiresAt])
+}
+
+// ─── AUDIT LOG ────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
