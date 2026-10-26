@@ -10,7 +10,16 @@ export interface User {
   name: string | null;
   createdAt: string;
 }
+export interface MitreTechnique {
+  id: string;
+  name: string;
+}
 
+export interface GlobalStats {
+  totalUsers: number;
+  totalInvestigations: number;
+  threatsDetected: number;
+}
 export interface AuthResponse {
   user: User;
   token: string;
@@ -40,11 +49,13 @@ export interface RiskAssessment {
   id: string;
   score: number;
   level: RiskLevel;
+  aiSummary: string | null; // <-- ADD
   explanation: {
     humanReadableSummary: string;
     rules: { provider: string; points: number; reason: string }[];
     missingDataPenalty: boolean;
     corroborationBonusApplied: boolean;
+    mitreTechniques: MitreTechnique[]; // <-- ADD
   };
   algorithmVersion: string;
   createdAt: string;

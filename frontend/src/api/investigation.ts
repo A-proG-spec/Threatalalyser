@@ -48,3 +48,16 @@ export const useGetInvestigation = (id: string) => {
     enabled: !!id, // Don't run if id is empty
   });
 };
+// src/api/investigation.ts (Add this at the bottom)
+import type { GlobalStats } from '../types';
+
+export const useGlobalStats = () => {
+  return useQuery({
+    queryKey: ['global-stats'],
+    queryFn: async () => {
+      const res = await apiClient.get<GlobalStats>('/stats');
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 5, // Cache for 5 minutes
+  });
+};
