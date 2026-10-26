@@ -1,7 +1,6 @@
 // src/pages/Profile.tsx
 import { useState } from 'react';
 import { PageWrapper } from '../components/layout/PageWrapper';
-import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { authApi } from '../api/auth';
 import { useAuth } from '../hooks/useAuth';
