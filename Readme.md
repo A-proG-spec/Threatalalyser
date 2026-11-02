@@ -1,4 +1,4 @@
-# 🛡️ ThreatLens: Multi-Source Cyber Threat Intelligence Platform
+🛡️ ThreatLens: Multi-Source Cyber Threat Intelligence Platform
 
 **Graduation Project — INSA Cyber Talent Summer Camp**
 
@@ -14,6 +14,13 @@
 ThreatLens is a web-based cybersecurity platform that helps users investigate suspicious websites, domains, IP addresses, and URLs. Instead of manually checking multiple security websites (like VirusTotal, URLhaus, and AbuseIPDB), users can search once in ThreatLens to receive a consolidated, easy-to-understand investigation report.
 
 The platform goes beyond simple API aggregation by normalizing data from multiple independent sources, applying a transparent risk-scoring engine, and providing an **AI-powered analyst summary** with **MITRE ATT&CK technique mapping**.
+
+---
+
+## 📚 Project Resources
+
+- **📄 Documentation:** [View Full Documentation](https://drive.google.com/file/d/1EpJZXTJeWMHR6UCFBzODe8F-lTHL5C02/view?usp=drivesdk)
+- **🎬 Demo Video:** [Watch Project Demo](https://drive.google.com/file/d/1z-l0vBoy8h_3vkIB52yQvlK0DHa8G4f3/view?usp=sharing)
 
 ---
 
@@ -194,3 +201,7 @@ INSA Cyber Talent Summer Camp
 Development Department
 
 **Project:** ThreatLens — Multi-Source Cyber Threat Intelligence Platform
+
+**🔗 Project Links:**
+- 📄 **Documentation:** https://drive.google.com/file/d/1EpJZXTJeWMHR6UCFBzODe8F-lTHL5C02/view?usp=drivesdk
+- 🎬 **Demo Video:** https://drive.google.com/file/d/1z-l0vBoy8h_3vkIB52yQvlK0DHa8G4f3/view?usp=sharing
